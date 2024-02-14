@@ -44,13 +44,23 @@ flag = 0
 def currpos_callback(msg):
     global flag
     index = flag
+    if index >= len(paths):
+        print('End of path')
+        exit()
     rospy.loginfo("current pos: x = {}, y = {}, z = {}".format(msg.x,msg.y,msg.z))
     twist_msg = Twist()
-    if(abs(paths[index][0]-msg.x)<0.2 and abs(paths[index][1]-msg.y)<0.2):
+    if(abs(paths[index][0]-msg.x)<2 and abs(384-paths[index][1]-msg.y)<2):
         flag = flag+4
-    twist_msg.linear.x = 0.25
-    twist_msg.angular.z = paths[index][1]-msg.y
+    twist_msg.linear.x = 0.2
+    # twist_msg.linear.x = (math.sqrt(math.pow(paths[index][0]-msg.x,2)+math.pow(384-paths[index][1]-msg.y,2)))/10
+    '''
+    if twist_msg.linear.x >= 3:
+        twist_msg.linear.x = 3
+    '''
+    twist_msg.angular.z = ((384-paths[index][1])-msg.y)/30
+    print('path\'s coordinate: ({},{})'.format(paths[index][0],384-paths[index][1]))
     print('x = {}, y = {}'.format(msg.x,msg.y))
+    print('lin_vel: ',twist_msg.linear.x)
     print('ang_vel: ',twist_msg.angular.z)
 
     twist_pub.publish(twist_msg)
@@ -102,7 +112,7 @@ def process_paths():
         # cot_val = cot(ang_vel/lin_vel)
         # print('angle diff: ', cot_val)
 
-        '''
+        
         # Twist 메시지 생성
         twist_msg = Twist()
         # twist_msg.linear.x = lin_vel
@@ -113,7 +123,7 @@ def process_paths():
         twist_pub.publish(twist_msg)
         # rospy.sleep(0.14)
         # current position subscribe, compare with target point
-        '''
+        
         prev = curr
 
 if __name__ == '__main__':
@@ -129,7 +139,7 @@ if __name__ == '__main__':
         currpos_subscriber()
 
         rospy.loginfo("All paths received. Processing...")
-        process_paths()
+        # process_paths()
 
     except rospy.ROSInterruptException:
         pass
