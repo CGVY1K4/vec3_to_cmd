@@ -4,7 +4,13 @@ import rospy
 from geometry_msgs.msg import Vector3, Twist
 from std_msgs.msg import Bool
 
-check = 0
+from move_to_pose import PathFinderController
+import numpy as np
+
+import stanley_controller as stanley
+
+# 사람 있는지 확인
+human_detected = 0
 
 # 빈 리스트를 생성하여 모든 경로 시퀀스를 저장할 준비를 합니다.
 paths = []
@@ -13,13 +19,13 @@ received_paths = False
 # subscribing boolean value from person_check node
 ###########################################
 def bool_callback(msg):
-    global check
+    global human_detected
     rospy.loginfo("Received boolean message: {}".format(msg.data))
     if(msg.data == True):
-        check = 1
+        human_detected = 1
     else:
-        check = 0
-    rospy.loginfo("check: {}".format(check))
+        human_detected = 0
+    rospy.loginfo("check: {}".format(human_detected))
 
 def bool_subscriber():
     # rospy.init_node("check_person_subscriber", anonymous=False)
@@ -53,76 +59,119 @@ def path_subscriber():
         rospy.sleep(5)
 ###########################################
 
+
 # subscribing current position from stella slam
 ###########################################
-flag = 0
-flag2 = 0
+index = 0
+
+# 
+target_speed = 0.1  # [m/s]
+prev_velocity = 0.0
+
+import time
+prev_time = 0
+
 def currpos_callback(msg):
     # bool_subscriber()
-    global flag
-    global flag2
-    global check
-    index = flag
+    global index
+    global human_detected
+
+
+    global prev_velocity 
+    global prev_time
+
+    cx = msg.x
+    cy = msg.y
+    cyaw = msg.z
+    last_target_idx = 
+
+    state = stanley.State(cx, cy, cyaw, prev_velocity)
+
+    
+    # acceleration을 speed로 변환 시키기 위해서 사용
+    # 처음 callback이 불렸을 때 0.1로 되고 그 이후부터 callback이 호출된 시간 간격을 사용하게 된다
+    dt = 0.1
+    if prev_time != 0:
+        dt = time.time() - prev_time
+    prev_time = time.time_ns() / 1_000_000_000 # get seconds in fractions
+
+    rospy.loginfo("dt is {}".format(dt))
+
+    map_val =  384  # 맵 크기. hybrid A*랑 2D 맵과 origin이 달라서 이렇게 차이 보정 해줘야 한다
     if index >= len(paths):
         print('End of path')
         exit()
     rospy.loginfo("current pos: x = {}, y = {}, z = {}".format(msg.x,msg.y,msg.z))
     twist_msg = Twist()
 
-    rospy.loginfo("check is : {}".format(check))
+    rospy.loginfo("check is : {}".format(human_detected))
 
-    if (check == 1):
+
+    
+    
+    if (human_detected == 1):
         twist_msg.linear.x = 0
         twist_msg.angular.z = 0
     else:
-        if(abs(paths[index][0]-msg.x)<2 and abs(384-paths[index][1]-msg.y)<2):
-            flag = flag+4
-        twist_msg.linear.x = 0.1
-        '''
-        if twist_msg.linear.x >= 3:
-            twist_msg.linear.x = 3
-        '''
-        
-        if (384-paths[index][1]-msg.y)>0.5:
-            if(paths[index][0]-msg.x)>0.5:
-                if(384-paths[index][1]-msg.y) < 0.8:
-                    twist_msg.angular.z = -0.07
-                elif(384-paths[index][1]-msg.y) < 1.0:
-                    twist_msg.angular.z = -0.1
-                elif(384-paths[index][1]-msg.y) < 1.3:
-                    twist_msg.angular.z = -0.12
-                elif(384-paths[index][1]-msg.y) < 1.6:
-                    twist_msg.angular.z = -0.15
-                else:
-                    twist_msg.angular.z = -0.17
-        else:
-            twist_msg.angular.z = 0
-        
 
-    # twist_msg.angular.z = ((384-paths[index][1])-msg.y)/30
-    print('path\'s coordinate: ({},{})'.format(paths[index][0],384-paths[index][1]))
+        # path를 1개씩 넘기면 간격이 너무 작아서 4개씩 넘기도록 함
+        # 목표 지점에 도착했는 확인 하는 조건문
+        if(abs(paths[index][0]-msg.x) < 2 and abs(map_val-paths[index][1]-msg.y) < 2):
+            index = index+4
+
+        ai = stanley.pid_control(target_speed, state.v)
+        di, target_idx = stanley.stanley_control(state, paths[0], paths[1], paths[2], index)
+
+        linear_velocity = ai
+        prev_velocity = linear_velocity
+
+        # deg * rad/deg / sec = rad/sec
+        angular_velocity = (di/57.29578)
+
+
+        
+        twist_msg.linear.x = linear_velocity
+        twist_msg.angular.z = angular_velocity
+
+    # twist_msg.angular.z = ((map_val-paths[index][1])-msg.y)/30
+    print('path\'s coordinate: ({},{}, {})'.format(paths[index][0],map_val-paths[index][1], paths[index][2]))
     print('x = {}, y = {}'.format(msg.x,msg.y))
     print('lin_vel: ',twist_msg.linear.x)
     print('ang_vel: ',twist_msg.angular.z)
 
+    if twist_msg.linear.x > 0.1:
+        twist_msg.linear.x = 0.1
+    if twist_msg.angular.z > 0.1:
+        twist_msg.angular.z = 0.1
+
+
     twist_pub.publish(twist_msg)
+    prev_velocity = twist_msg.linear.x
+    
 
 
 def currpos_subscriber():
     # rospy.init_node('currpos_subscriber_node')
     rospy.Subscriber('current_pose', Vector3, currpos_callback)
     # rospy.spin()
+    # if (check == 1):
+    #     twist_msg.linear.x = 0
+    #     twist_msg.angular.z = 0
+    # else:
+
+    #     # path를 1개씩 넘기면 간격이 너무 작아서 4개씩 넘기도록 함
+    #     # 목표 지점에 도착했는 확인 하는 조건문
+    #     if(abs(paths[index][0]-msg.x) < 2 and abs(map_val-paths[index][1]-msg.y) < 2):
+    #         index = index+4
+
 
 ###########################################
 def tracloss_callback(msg):
-    rospy.loginfo("check1")
     twist_msg = Twist()
-    rospy.loginfo("check2")
     if (msg.data == True):
         twist_msg.linear.x = 0
-        twist_msg.angular.z = 0.1
+        twist_msg.angular.z = 0.05
         twist_pub.publish(twist_msg)
-    rospy.loginfo("check3")
 
     print('lin_vel: ',twist_msg.linear.x)
     print('ang_vel: ',twist_msg.angular.z)
